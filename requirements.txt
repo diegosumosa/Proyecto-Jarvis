@@ -6,3 +6,6 @@ pyttsx3
 wikipedia
 edge-tts
 ddgs
+google-api-python-client
+google-auth-oauthlib
+requests

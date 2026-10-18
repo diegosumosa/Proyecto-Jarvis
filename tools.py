@@ -184,6 +184,15 @@ _DISPATCH = {
     "search_wikipedia": search_wikipedia,
 }
 
+# Módulos con más herramientas: se registran aquí.
+import google_tools  # noqa: E402
+import info_tools  # noqa: E402
+import scheduler  # noqa: E402
+
+for _module in (scheduler, info_tools, google_tools):
+    TOOL_DEFINITIONS.extend(_module.TOOL_DEFINITIONS)
+    _DISPATCH.update(_module.HANDLERS)
+
 
 def run_tool(name: str, args: dict) -> str:
     func = _DISPATCH.get(name)

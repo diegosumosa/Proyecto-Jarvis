@@ -4,6 +4,7 @@ import threading
 import time
 import unicodedata
 
+import scheduler
 from audio_in import listen
 from audio_out import speak
 from claude_brain import ask_claude
@@ -55,8 +56,11 @@ def run(on_state=lambda state: None, stop: threading.Event = None, muted: thread
         finally:
             on_state("idle")
 
+    scheduler.start()
     say("Jarvis en línea.")
     while not stop.is_set():
+        while not scheduler.alerts.empty():  # temporizadores, alarmas y recordatorios
+            say(scheduler.alerts.get())
         if muted.is_set():
             on_state("idle")
             stop.wait(0.3)
