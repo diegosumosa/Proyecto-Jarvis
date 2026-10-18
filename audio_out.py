@@ -11,8 +11,8 @@ import time
 import edge_tts
 
 # Cambia aquí la voz. Ejecuta voice_demo.py para escucharlas.
-VOICE = "es-MX-JorgeNeural"
-RATE = "+30%"  # velocidad: "+0%" normal, "+20%" más rápido, "-10%" más lento
+VOICE = "fr-FR-VivienneMultilingualNeural"
+RATE = "+10%"  # velocidad: "+0%" normal, "+20%" más rápido, "-10%" más lento
 
 _winmm = ctypes.windll.winmm
 

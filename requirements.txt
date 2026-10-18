@@ -9,3 +9,5 @@ ddgs
 google-api-python-client
 google-auth-oauthlib
 requests
+numpy
+PyAudioWPatch

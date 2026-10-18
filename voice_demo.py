@@ -1,5 +1,8 @@
 """Reproduce una frase con distintas voces en español para que elijas la tuya."""
+import audio_out
 from audio_out import speak
+
+audio_out.RATE = "+10%"  # más natural que el +30% que usa Jarvis para ir rápido
 
 VOICES = [
     # Voces multilingües: las más naturales; hablan español con un leve acento.
