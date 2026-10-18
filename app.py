@@ -11,6 +11,7 @@ import threading
 import time
 import tkinter as tk
 
+import audio_in
 import audio_out
 import main
 
@@ -20,6 +21,8 @@ BASE_RADIUS = 48
 TRANSPARENT = "#010101"  # color "clave": se vuelve transparente en Windows
 ORANGE = (255, 140, 20)
 GRAY = (120, 120, 125)
+GREEN = (61, 220, 132)
+HEARING_HOLD = 0.8  # segundos que el anillo sigue verde después de la última señal de voz
 RED = "#e5484d"
 FPS_MS = 33
 BTN_Y = SIZE - 26  # centro del botón del micrófono
@@ -55,6 +58,9 @@ class JarvisOrb:
 
         self.state = "idle"
         self.level = 0.0  # intensidad actual (suavizada)
+        self.mic = 0.0  # volumen del micrófono (suavizado, 0-1)
+        self.hearing = False  # True mientras detecta tu voz
+        self._voice_until = 0.0
         self.pulse = 0.0  # amplitud de la "voz" simulada
         self.stop = threading.Event()
         self.muted = threading.Event()
@@ -103,6 +109,17 @@ class JarvisOrb:
     def set_state(self, state):
         self.state = state  # solo asigna un str: seguro entre hilos
 
+    def _draw_status(self, c, muted):
+        if muted:
+            text, color = "Silenciado", (150, 150, 155)
+        elif self.state == "listening":
+            text, color = ("Te escucho…", GREEN) if self.hearing else ("Esperando…", (190, 190, 195))
+        else:
+            text = {"thinking": "Pensando…", "speaking": "Hablando"}.get(self.state, "")
+            color = ORANGE
+        if text:
+            c.create_text(CENTER, 14, text=text, fill=_blend(color, 0.9), font=("Segoe UI", 10, "bold"))
+
     def _draw_mic_button(self, c, muted):
         cx, cy = CENTER - BTN_GAP, BTN_Y
         c.create_oval(cx - BTN_R, cy - BTN_R, cx + BTN_R, cy + BTN_R,
@@ -130,7 +147,17 @@ class JarvisOrb:
             return
         t = time.time()
         muted = self.muted.is_set()
+        # Volumen del micrófono en vivo: 0 en silencio, ~1 a volumen de voz normal.
+        raw = audio_in.mic_level / max(audio_in.mic_threshold * 2.5, 1.0)
+        listening = self.state == "listening" and not muted
+        self.mic += ((min(raw, 1.0) if listening else 0.0) - self.mic) * 0.4
+        now = time.time()
+        if listening and audio_in.mic_level > audio_in.mic_threshold:
+            self._voice_until = now + HEARING_HOLD  # el volumen baja entre sílabas: se mantiene en verde un rato
+        self.hearing = listening and now < self._voice_until
         target = 0.0 if muted else TARGET.get(self.state, 0.0)
+        if self.hearing:
+            target = max(target, 0.35 + 0.5 * self.mic)  # el orbe brilla más cuando te oye
         self.level += (target - self.level) * 0.15  # suaviza encendido/apagado
 
         # Simula el ritmo de la voz: oscilaciones rápidas con azar mientras habla.
@@ -153,6 +180,12 @@ class JarvisOrb:
                 fill=_blend(color, self.level * 0.55 * (1 - i / 15) ** 2),
                 outline="",
             )
+        # Anillo de escucha: crece con tu voz; verde cuando detecta que hablas.
+        if listening:
+            ring = GREEN if self.hearing else (190, 120, 40)
+            rr = radius + 22 + self.mic * 40
+            c.create_oval(CENTER - rr, CENTER - rr, CENTER + rr, CENTER + rr,
+                          outline=_blend(ring, 0.45 + 0.55 * self.mic), width=2 + int(self.mic * 4))
         # Núcleo.
         core = _blend(color, 0.22 + 0.78 * self.level)
         c.create_oval(
@@ -165,6 +198,7 @@ class JarvisOrb:
             CENTER - h, CENTER - h * 1.2, CENTER + h * 0.3, CENTER - h * 0.1,
             fill=_blend((255, 235, 190), 0.1 + 0.6 * self.level), outline="",
         )
+        self._draw_status(c, muted)
         self._draw_mic_button(c, muted)
         self._draw_stop_button(c, self.state in ("thinking", "speaking"))
 
@@ -178,7 +212,8 @@ class JarvisOrb:
             main.run(on_state=self.set_state, stop=self.stop, muted=self.muted,
                      interrupt=self.interrupt)
         except Exception as e:
-            print(f"Error en Jarvis: {e}")
+            import traceback
+            main.log(f"[caída] Jarvis se detuvo por un error: {e}\n{traceback.format_exc()}")
 
     def start(self):
         self._worker = threading.Thread(target=self._run_jarvis, daemon=True)

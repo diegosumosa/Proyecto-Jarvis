@@ -2,6 +2,8 @@
 import asyncio
 import ctypes
 import os
+import queue
+import re
 import tempfile
 import threading
 import time
@@ -51,22 +53,63 @@ def _speak_offline(text: str) -> None:
     engine.stop()
 
 
-def speak(text: str, voice: str = None) -> None:
-    _cancel.clear()
+def _split_sentences(text: str, min_len: int = 40) -> list:
+    """Parte el texto en frases; junta las muy cortas para que la voz suene natural."""
+    parts = re.split(r"(?<=[.!?…])\s+", text.strip())
+    chunks = []
+    for part in parts:
+        if chunks and len(chunks[-1]) < min_len:
+            chunks[-1] += " " + part
+        else:
+            chunks.append(part)
+    return [c for c in chunks if c]
+
+
+def _synthesize_to_file(text: str, voice: str) -> str:
     fd, path = tempfile.mkstemp(suffix=".mp3")
     os.close(fd)
     try:
-        asyncio.run(_synthesize(text, voice or VOICE, path))
-        if not _cancel.is_set():
-            play_mp3(path)
-    except Exception as e:  # sin internet u otro fallo: usa la voz de Windows
-        print(f"(edge-tts falló: {e}; usando voz offline)")
-        _speak_offline(text)
-    finally:
+        asyncio.run(_synthesize(text, voice, path))
+    except Exception:
+        os.remove(path)
+        raise
+    return path
+
+
+def speak(text: str, voice: str = None) -> None:
+    """Sintetiza por frases: empieza a hablar con la primera mientras prepara las siguientes."""
+    _cancel.clear()
+    voice = voice or VOICE
+    chunks = _split_sentences(text) or [text]
+    ready = queue.Queue()  # (texto, ruta mp3 o None si falló)
+
+    def producer():
+        for chunk in chunks:
+            if _cancel.is_set():
+                break
+            try:
+                ready.put((chunk, _synthesize_to_file(chunk, voice)))
+            except Exception as e:  # sin internet u otro fallo: esa frase irá con la voz de Windows
+                print(f"(edge-tts falló: {e}; usando voz offline)")
+                ready.put((chunk, None))
+        ready.put(None)
+
+    threading.Thread(target=producer, daemon=True).start()
+    while (item := ready.get()) is not None:
+        chunk, path = item
         try:
-            os.remove(path)
-        except OSError:
-            pass
+            if _cancel.is_set():
+                continue
+            if path:
+                play_mp3(path)
+            else:
+                _speak_offline(chunk)
+        finally:
+            if path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
 
 if __name__ == "__main__":

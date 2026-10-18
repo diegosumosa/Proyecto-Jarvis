@@ -4,11 +4,12 @@ import subprocess
 from ctypes import wintypes
 from datetime import datetime
 
+import apps
 import wikipedia
 from ddgs import DDGS
 
-# Apps que Jarvis puede abrir (nombre -> comando). Añade las tuyas aquí,
-# p. ej. "spotify": r"C:\Users\TU_USUARIO\AppData\Roaming\Spotify\Spotify.exe"
+# Apps con nombre fijo (nombre -> comando). Jarvis además encuentra solo las apps y juegos
+# instalados (ver apps.py); aquí solo hace falta añadir las que quieras abrir con otro nombre.
 APPS = {
     "bloc de notas": "notepad.exe",
     "calculadora": "calc.exe",
@@ -20,13 +21,24 @@ APPS = {
 def open_app(app_name: str) -> str:
     key = app_name.strip().lower()
     command = APPS.get(key)
-    if command is None:
-        return f"No tengo registrada la app '{app_name}'. Disponibles: {', '.join(APPS)}."
     try:
-        subprocess.Popen(command)
-        return f"Abrí {key}."
+        if command is not None:
+            subprocess.Popen(command)
+            return f"Abrí {key}."
+        match, candidates = apps.find(key)
+        if match is None:
+            if candidates:
+                return f"Hay varias apps que coinciden con '{app_name}': {', '.join(candidates)}. Pregunta cuál."
+            return f"No encontré ninguna app o juego instalado llamado '{app_name}'."
+        name, kind, target = match
+        apps.launch(kind, target)
+        return f"Abrí {name}."
     except OSError as e:
-        return f"No pude abrir {key}: {e}"
+        return f"No pude abrir {app_name}: {e}"
+
+
+def close_app(app_name: str, force: bool = False) -> str:
+    return apps.close(app_name, force)
 
 
 # --- Control de música (Spotify) ---
@@ -118,14 +130,32 @@ def search_web(query: str, news: bool = False) -> str:
 TOOL_DEFINITIONS = [
     {
         "name": "open_app",
-        "description": "Abre una aplicación local del computador del usuario.",
+        "description": (
+            "Abre cualquier aplicación o juego instalado en el computador del usuario "
+            "(Discord, Chrome, Steam, juegos, etc.) a partir de su nombre."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "app_name": {
                     "type": "string",
-                    "description": f"Nombre de la app. Opciones: {', '.join(APPS)}.",
+                    "description": "Nombre de la app o juego tal como lo dijo el usuario.",
                 }
+            },
+            "required": ["app_name"],
+        },
+    },
+    {
+        "name": "close_app",
+        "description": (
+            "Cierra una aplicación o juego abierto (Discord, Chrome, etc.). Por defecto la cierra con "
+            "normalidad; usa force=true solo si el usuario pide forzar el cierre o la app no se cierra."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "app_name": {"type": "string", "description": "Nombre de la app o juego a cerrar."},
+                "force": {"type": "boolean", "description": "true para forzar el cierre."},
             },
             "required": ["app_name"],
         },
@@ -178,18 +208,24 @@ TOOL_DEFINITIONS = [
 
 _DISPATCH = {
     "open_app": open_app,
+    "close_app": close_app,
     "media_control": media_control,
     "get_time": get_time,
     "search_web": search_web,
     "search_wikipedia": search_wikipedia,
 }
 
+apps.prewarm()  # indexa las apps instaladas en segundo plano
+
 # Módulos con más herramientas: se registran aquí.
+import daily_tools  # noqa: E402
 import google_tools  # noqa: E402
 import info_tools  # noqa: E402
+import memory_tools  # noqa: E402
 import scheduler  # noqa: E402
+import spotify_tools  # noqa: E402
 
-for _module in (scheduler, info_tools, google_tools):
+for _module in (scheduler, info_tools, google_tools, spotify_tools, memory_tools, daily_tools):
     TOOL_DEFINITIONS.extend(_module.TOOL_DEFINITIONS)
     _DISPATCH.update(_module.HANDLERS)
 

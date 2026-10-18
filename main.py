@@ -3,15 +3,36 @@ import re
 import threading
 import time
 import unicodedata
+from datetime import datetime
+from pathlib import Path
 
+import audio_in
 import scheduler
 from audio_in import listen
 from audio_out import speak
 from claude_brain import ask_claude
 
-NAME_VARIANTS = ("jarvis", "yarvis", "harvis", "jarbis", "yarbis", "jarvi", "yarvi", "yervis", "jervis")
-WAKE_WINDOW = 12  # segundos que sigue atento tras una respuesta, sin repetir su nombre
+NAME_VARIANTS = ("jarvis", "yarvis", "harvis", "jarbis", "yarbis", "jarvi", "yarvi", "yervis", "jervis", "arvis", "garvis", "charvis", "travis", "jarves", "harvi")
+# Palabras que pueden ir antes del nombre ("oye, Jarvis"). Con otra cosa delante ("siento que Jarvis...")
+# se habla DE Jarvis, no A Jarvis, y no se activa.
+FILLERS = {"oye", "hey", "ey", "hola", "y", "eh", "ok", "okay", "bueno", "pues", "ahora", "mira", "a", "ya"}
+WAKE_WINDOW = 7  # segundos que sigue atento tras una respuesta, sin repetir su nombre
+FOLLOWUP_MIN_WORDS = 2  # sin decir 'Jarvis', las frases de una sola palabra se ignoran
+FOLLOWUP_MAX_NO_SPEECH = 0.15  # y se exige más seguridad de que hubo voz de verdad
+LOG_FILE = Path(__file__).parent / "data" / "jarvis.log"
 WAKE_MAX_POSITION = 3  # "Jarvis" debe estar entre las primeras palabras ("oye Jarvis, ...")
+
+
+def log(message: str) -> None:
+    """Anota lo que oyó y decidió Jarvis (data/jarvis.log), para saber por qué actuó. Jarvis corre
+    sin consola, así que los print no se ven."""
+    print(message)
+    try:
+        LOG_FILE.parent.mkdir(exist_ok=True)
+        with LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}\n")
+    except OSError:
+        pass
 
 
 def _normalize(text: str) -> str:
@@ -20,22 +41,33 @@ def _normalize(text: str) -> str:
 
 
 def is_shutdown(text: str) -> bool:
-    """True solo para 'apágate (Jarvis)' o 'apaga/apagar a Jarvis'.
-    Frases como 'Jarvis, apaga la música' NO apagan el programa."""
+    """True para 'apágate (Jarvis)', 'apaga a Jarvis', 'Jarvis, apágate' o 'ciérrate Jarvis'.
+    Tolera que Whisper se coma la 'a' inicial ('págate'). Frases como
+    'Jarvis, apaga la música' NO apagan el programa."""
     t = _normalize(text)
+    t = re.sub(r"[^\w\s]", " ", t)  # sin puntuación
     names = "|".join(NAME_VARIANTS)
-    if re.search(r"\bapagate\b", t) and any(n in t for n in NAME_VARIANTS):
+    reflexive = r"(?:a\s?pa[gd]ate|pa[gd]ate|apagarte|cierrate|cerrarte|desactivate)"
+    verb = r"(?:apaga|apagar|pagar|cierra|cerrar|desactiva|desactivar)"
+    if re.search(rf"\b{reflexive}\b", t) and re.search(rf"\b(?:{names})\b", t):
         return True
-    return bool(re.search(rf"\bapagar?\s+(a\s+)?({names})\b", t))
+    if re.search(rf"\b{verb}\s+(?:a\s+)?(?:{names})\b", t):
+        return True
+    return bool(re.search(rf"\b(?:{names})\s+{verb}\s*$", t))
 
 
 def extract_command(text: str):
-    """Si la frase empieza con 'Jarvis' devuelve lo que viene después ('' si solo dijo el nombre).
-    Devuelve None si no lo llamó."""
+    """Si la frase empieza con 'Jarvis' ('Jarvis, pon música') o termina con él ('pon música, Jarvis')
+    devuelve la orden ('' si solo dijo el nombre). Devuelve None si no lo llamó."""
     tokens = re.findall(r"\w+", text)
     for i, token in enumerate(tokens[:WAKE_MAX_POSITION]):
         if _normalize(token) in NAME_VARIANTS:
-            return " ".join(tokens[i + 1:])
+            if all(_normalize(t) in FILLERS for t in tokens[:i]):
+                return " ".join(tokens[i + 1:])
+            break  # hay otras palabras antes: están hablando de Jarvis, no con él
+    for i in range(max(len(tokens) - 4, 0), len(tokens)):  # el nombre al final de la frase
+        if _normalize(tokens[i]) in NAME_VARIANTS:
+            return " ".join(tokens[:i] + tokens[i + 1:])
     return None
 
 
@@ -73,15 +105,18 @@ def run(on_state=lambda state: None, stop: threading.Event = None, muted: thread
         if not text or muted.is_set():
             continue
 
+        log(f"[oído] {text!r} (sin_voz={audio_in.last_no_speech_prob:.2f}, pico={audio_in.last_peak:.0f}, umbral={audio_in.mic_threshold:.0f})")
         if is_shutdown(text):
-            print(f"Tú: {text}")
             say("Apagando sistemas. Hasta luego.")
             break
 
         command = extract_command(text)
         if command is None:
             if time.time() > awake_until:
-                print(f"(ignorado, sin 'Jarvis'): {text}")
+                log("[ignorado] no dijo 'Jarvis'")
+                continue
+            if len(text.split()) < FOLLOWUP_MIN_WORDS or audio_in.last_no_speech_prob > FOLLOWUP_MAX_NO_SPEECH:
+                log("[ignorado] seguimiento dudoso (muy corto o poco seguro de que fuera voz)")
                 continue
             command = text  # sigue en modo conversación
         elif not command:
@@ -89,21 +124,24 @@ def run(on_state=lambda state: None, stop: threading.Event = None, muted: thread
             awake_until = time.time() + WAKE_WINDOW
             continue
 
-        print(f"Tú: {command}")
+        log(f"[orden] {command}")
         on_state("thinking")
+        started = time.time()
         try:
             reply = ask_claude(command)
         except Exception as e:
-            print(f"Error: {e}")
+            log(f"[error] {e}")
             reply = "Tuve un problema al procesar tu solicitud."
         if interrupt.is_set():  # lo cortaron mientras pensaba: se descarta la respuesta
             interrupt.clear()
             print("(respuesta descartada)")
             continue
-        print(f"Jarvis: {reply}")
+        log(f"[respuesta] ({time.time() - started:.1f}s) {reply}")
         say(reply)
         interrupt.clear()
-        awake_until = time.time() + WAKE_WINDOW
+        # Solo sigue atento sin oír su nombre si acaba de hacer una pregunta; así la tele, otras
+        # personas o ruido de fondo no se cuelan como órdenes.
+        awake_until = time.time() + WAKE_WINDOW if reply.rstrip().endswith("?") else 0.0
     on_state("idle")
 
 
