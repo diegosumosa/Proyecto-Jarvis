@@ -1,0 +1,7 @@
+groq
+python-dotenv
+SpeechRecognition
+pyaudio
+pyttsx3
+wikipedia
+edge-tts
