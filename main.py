@@ -16,9 +16,11 @@ NAME_VARIANTS = ("jarvis", "yarvis", "harvis", "jarbis", "yarbis", "jarvi", "yar
 # Palabras que pueden ir antes del nombre ("oye, Jarvis"). Con otra cosa delante ("siento que Jarvis...")
 # se habla DE Jarvis, no A Jarvis, y no se activa.
 FILLERS = {"oye", "hey", "ey", "hola", "y", "eh", "ok", "okay", "bueno", "pues", "ahora", "mira", "a", "ya"}
-WAKE_WINDOW = 7  # segundos que sigue atento tras una respuesta, sin repetir su nombre
+WAKE_WINDOW = 8  # segundos que sigue atento tras una respuesta, sin repetir su nombre
 FOLLOWUP_MIN_WORDS = 2  # sin decir 'Jarvis', las frases de una sola palabra se ignoran
 FOLLOWUP_MAX_NO_SPEECH = 0.15  # y se exige más seguridad de que hubo voz de verdad
+# Palabras con las que una frase no puede terminar: si acaba así, se cortó a medias.
+DANGLING = {"de", "del", "a", "al", "el", "la", "los", "las", "un", "una", "y", "o", "que", "con", "en", "para", "por", "mi", "mis", "tu", "me", "te", "se", "lo", "pon", "ponme"}
 LOG_FILE = Path(__file__).parent / "data" / "jarvis.log"
 WAKE_MAX_POSITION = 3  # "Jarvis" debe estar entre las primeras palabras ("oye Jarvis, ...")
 
@@ -105,7 +107,17 @@ def run(on_state=lambda state: None, stop: threading.Event = None, muted: thread
         if not text or muted.is_set():
             continue
 
-        log(f"[oído] {text!r} (sin_voz={audio_in.last_no_speech_prob:.2f}, pico={audio_in.last_peak:.0f}, umbral={audio_in.mic_threshold:.0f})")
+        # Si la frase quedó cortada en una pausa ("...pon la playlist de"), espera el resto y la une.
+        for _ in range(2):
+            words = _normalize(text).strip(" .,").split()
+            if not (text.endswith(("...", "…")) or (words and words[-1] in DANGLING)):
+                break
+            rest = listen(skip=lambda: muted.is_set() or stop.is_set(), timeout=3)
+            if not rest:
+                break
+            text = text.rstrip(". …") + " " + rest.lstrip(". …")
+
+        log(f"[oído] {text!r} (stt={audio_in.last_stt_seconds:.1f}s, sin_voz={audio_in.last_no_speech_prob:.2f}, pico={audio_in.last_peak:.0f}, umbral={audio_in.mic_threshold:.0f})")
         if is_shutdown(text):
             say("Apagando sistemas. Hasta luego.")
             break
@@ -139,9 +151,9 @@ def run(on_state=lambda state: None, stop: threading.Event = None, muted: thread
         log(f"[respuesta] ({time.time() - started:.1f}s) {reply}")
         say(reply)
         interrupt.clear()
-        # Solo sigue atento sin oír su nombre si acaba de hacer una pregunta; así la tele, otras
-        # personas o ruido de fondo no se cuelan como órdenes.
-        awake_until = time.time() + WAKE_WINDOW if reply.rstrip().endswith("?") else 0.0
+        # Tras responder sigue atento unos segundos sin oír su nombre (las frases dudosas o de una sola
+        # palabra se siguen ignorando, para que la tele o el ruido no se cuelen como órdenes).
+        awake_until = time.time() + WAKE_WINDOW
     on_state("idle")
 
 

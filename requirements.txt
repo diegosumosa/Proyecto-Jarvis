@@ -11,3 +11,4 @@ google-auth-oauthlib
 requests
 numpy
 PyAudioWPatch
+pillow

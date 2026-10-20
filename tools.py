@@ -220,12 +220,16 @@ apps.prewarm()  # indexa las apps instaladas en segundo plano
 # Módulos con más herramientas: se registran aquí.
 import daily_tools  # noqa: E402
 import google_tools  # noqa: E402
+import file_tools  # noqa: E402
 import info_tools  # noqa: E402
 import memory_tools  # noqa: E402
+import route_tools  # noqa: E402
 import scheduler  # noqa: E402
+import screen_tools  # noqa: E402
 import spotify_tools  # noqa: E402
 
-for _module in (scheduler, info_tools, google_tools, spotify_tools, memory_tools, daily_tools):
+for _module in (scheduler, info_tools, google_tools, spotify_tools, memory_tools, daily_tools,
+                screen_tools, file_tools, route_tools):
     TOOL_DEFINITIONS.extend(_module.TOOL_DEFINITIONS)
     _DISPATCH.update(_module.HANDLERS)
 

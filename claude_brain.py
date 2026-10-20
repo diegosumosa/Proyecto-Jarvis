@@ -22,6 +22,12 @@ SYSTEM_PROMPT = (
     "(apagar, parar, pausar o 'pagar' la música significan pausarla), la hora o "
     "buscar información: Wikipedia para temas enciclopédicos y la búsqueda web para noticias, "
     "datos actuales o cualquier otra cosa. Si usas la web, resume en una o dos frases. "
+    "Si el usuario pregunta de qué trata la letra o el significado de la canción que suena, "
+    "primero consulta qué suena en Spotify (spotify_now_playing), luego busca en la web el significado "
+    "o análisis de esa canción y explícalo con tus palabras; nunca digas que no puedes, y no copies la letra completa. "
+    "Para 'mira mi pantalla' o preguntas sobre lo que el usuario tiene en pantalla usa look_at_screen. "
+    "Para archivos usa find_files y luego open_path o move_file con la ruta completa; nunca borres nada. "
+    "Para tiempos y rutas usa get_route (con open_map si pide ver el mapa o el tráfico). "
     "Traduce tú mismo cuando te lo pidan, diciendo solo la traducción. "
     "Memoria: cuando el usuario te cuente algo personal y duradero (nombre, gustos, familia, ciudad, "
     "cumpleaños) o diga 'recuerda que', guárdalo con la herramienta memory (add) como una frase corta. "
@@ -83,6 +89,12 @@ _TOOL_GROUPS = {
         r"portapapeles|copiado|archivo|\blee\b|\bleer\b|resum|traduc|pagina",
         ["read_clipboard", "read_file", "read_webpage"],
     ),
+    "screen": (r"pantalla|\bmira\b|\bves\b|captura|error|lee esto|que dice", ["look_at_screen"]),
+    "files": (
+        r"archivo|carpeta|descarga|documento|escritorio|mueve|copia|foto|\bpdf\b",
+        ["find_files", "open_path", "list_folder", "create_folder", "move_file"],
+    ),
+    "route": (r"\bruta|trafico|llegar|camino|cuanto tardo|cuanto se tarda|distancia|maps|mapa|trayecto", ["get_route"]),
     "daily": (r"buenos dias|buenas|resumen|que tengo hoy|mi dia", ["daily_summary"]),
 }
 _ALWAYS_TOOLS = ["memory", "get_time"]
